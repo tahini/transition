@@ -19,6 +19,7 @@ interface SectionDescription {
 export interface PreferencesModel {
     defaultSection: string;
     infoPanelPosition: string;
+    mapStyleURL: string;
     sections: {
         [key: string]: {
             [key: string]: SectionDescription;
@@ -35,6 +36,7 @@ export interface PreferencesModel {
 const defaultPreferences: PreferencesModel = {
     defaultSection: 'agencies',
     infoPanelPosition: 'right',
+    mapStyleURL: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
     sections: {
         transition: {
             agencies: {
