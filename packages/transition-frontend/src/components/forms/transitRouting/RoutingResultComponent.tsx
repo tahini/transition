@@ -33,8 +33,8 @@ export interface TransitRoutingResultsProps extends WithTranslation {
 
 const showCurrentAlternative = async (result, alternativeIndex) => {
     const pathGeojson = await result.getPathGeojson(alternativeIndex, {});
-    serviceLocator.eventManager.emit('map.updateLayer', 'routingPoints', result.originDestinationToGeojson());
     serviceLocator.eventManager.emit('map.updateLayers', {
+        routingPoints: result.originDestinationToGeojson(),
         routingPaths: pathGeojson,
         routingPathsStrokes: pathGeojson
     });
