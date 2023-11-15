@@ -176,7 +176,7 @@ class TransitNodeEdit extends SaveableObjectForm<Node, NodeFormProps, NodeFormSt
     onDrag(coordinates) {
         serviceLocator.eventManager.emit('map.updateLayer', 'transitNodesSelected', (oldGeojson) => {
             oldGeojson.features[0].geometry.coordinates = coordinates;
-            return oldGeojson;
+            return turfFeatureCollection([oldGeojson.features[0]]);
         });
     }
 

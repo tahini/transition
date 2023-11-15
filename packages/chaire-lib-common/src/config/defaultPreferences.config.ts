@@ -105,15 +105,15 @@ const defaultPreferences: PreferencesModel = {
             agencies: [
                 'aggregatedOD',
                 'transitNodesRoutingRadius',
-                'transitStations',
                 'transitStationsSelected',
-                'transitPaths',
                 'transitPathsSelected',
-                'transitPathWaypoints',
-                'transitPathWaypointsSelected',
-                'transitNodes',
                 'transitNodesSelected',
                 'transitNodesSelectedErrors',
+                'transitPathWaypointsSelected',
+                'transitPathWaypoints',
+                'transitPaths',
+                'transitStations',
+                'transitNodes',
                 'transitPathWaypointsErrors'
             ],
             nodes: [

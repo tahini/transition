@@ -165,10 +165,16 @@ class MapboxLayerManager {
         this._map?.addLayer(this._layersByName[layerName].layer, this.getNextLayerName(layerName)); */
     }
 
-    updateLayer(layerName: string, geojson: GeoJSON.FeatureCollection<GeoJSON.Geometry>) {
-        // FIXME: In original code, geojson can be a function. Do we need to support this? It took the source data as parameter
+    updateLayer(
+        layerName: string,
+        geojson:
+            | GeoJSON.FeatureCollection<GeoJSON.Geometry>
+            | ((old: GeoJSON.FeatureCollection) => GeoJSON.FeatureCollection)
+    ) {
         if (this._layersByName[layerName] !== undefined) {
-            this._layersByName[layerName].layerData = geojson;
+            const newGeojson =
+                typeof geojson === 'function' ? geojson(this._layersByName[layerName].layerData) : geojson;
+            this._layersByName[layerName].layerData = newGeojson;
             if (this._layersByName[layerName].visible && this._enabledLayers.includes(layerName)) {
                 serviceLocator.eventManager.emit('map.updatedLayer', layerName);
             }
@@ -200,7 +206,9 @@ class MapboxLayerManager {
     }
 
     getEnabledLayers(): MapLayer[] {
-        return this._enabledLayers.map((layerName) => this._layersByName[layerName]);
+        return this._enabledLayers
+            .filter((layerName) => this._layersByName[layerName].layerData.features.length > 0)
+            .map((layerName) => this._layersByName[layerName]);
     }
 
     getLayerNames() {
