@@ -9,6 +9,7 @@ import ReactDom from 'react-dom';
 import { withTranslation } from 'react-i18next';
 import DeckGL from '@deck.gl/react/typed';
 import { Layer, Deck } from '@deck.gl/core/typed';
+import { EditableGeoJsonLayer } from '@nebula.gl/layers';
 
 import { Map as MapLibreMap } from 'react-map-gl/maplibre';
 import _debounce from 'lodash/debounce';
@@ -52,6 +53,8 @@ import { BitmapLayer } from '@deck.gl/layers';
 import { TileLayer } from '@deck.gl/geo-layers';
 import { MjolnirEvent, MjolnirGestureEvent } from 'mjolnir.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { emptyFeatureCollection } from 'chaire-lib-common/lib/services/geodata/GeoJSONUtils';
+import MapToolbox, { MapFeature, supportedFeatures } from 'chaire-lib-frontend/lib/components/map/MapEditToolbox';
 
 export interface MainMapProps extends LayoutSectionProps {
     zoom: number;
@@ -75,12 +78,18 @@ interface MainMapState {
     mapStyleURL: string;
     xyzTileLayer?: Layer; // Temporary! Move this somewhere else
     isDragging: boolean;
+    selectedFeatureIndexes: number[];
+    selectionPolygon: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+    currentMode: MapFeature;
 }
 
 /**
  * TODO: For now, hard code the map for Transition here. But it should be in
  * chaire-lib and offer the possibility to pass the application modules when the
  * API for it has stabilised.
+ *
+ * Also there is way too much code in this file, it should be split in smaller,
+ * single responsibility components/files
  */
 class MainMap extends React.Component<MainMapProps, MainMapState> {
     private layerManager: MapLayerManager;
@@ -112,7 +121,7 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
         super(props);
 
         // TODO: This should not be here
-        let xyzTileLayer = undefined;
+        let xyzTileLayer: Layer | undefined = undefined;
         if (process.env.CUSTOM_RASTER_TILES_XYZ_URL) {
             xyzTileLayer = new TileLayer({
                 data: process.env.CUSTOM_RASTER_TILES_XYZ_URL,
@@ -135,7 +144,7 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
                         bounds: [west, south, east, north]
                     });
                 }
-            });
+            }) as any;
         }
 
         this.state = {
@@ -149,7 +158,10 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
             enabledLayers: [],
             mapStyleURL: Preferences.get('mapStyleURL'),
             xyzTileLayer: xyzTileLayer,
-            isDragging: false
+            isDragging: false,
+            selectedFeatureIndexes: [],
+            selectionPolygon: emptyFeatureCollection as GeoJSON.FeatureCollection<GeoJSON.Polygon>,
+            currentMode: 'view'
         };
 
         this.layerManager = new MapLayerManager(layersConfig);
@@ -368,6 +380,9 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
                 selectedNodes.length !== nodesInPolygon.length
             );
             serviceLocator.selectedObjectsManager.select('isDrawPolygon', true);
+            this.setState({
+                selectionPolygon: emptyFeatureCollection as GeoJSON.FeatureCollection<GeoJSON.Polygon>
+            });
         }
     };
 
@@ -587,6 +602,38 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
             layers.unshift(this.state.xyzTileLayer);
         }
 
+        if (this.state.currentMode === 'selectPolygon' || this.state.currentMode === 'selectRectangle') {
+            // FIXME Ideally, we could use a SelectionLayer instead, but that layer does not pick all objects in selected area (https://github.com/uber/nebula.gl/issues/297)
+            const props = {
+                id: 'selectionPolygonLayer',
+                data: this.state.selectionPolygon,
+                getColor: [255, 255, 255, 50],
+                getLineColor: [255, 255, 255] as [number, number, number],
+                getLineWidth: 2,
+                stroked: true,
+                mode: supportedFeatures[this.state.currentMode].mode,
+                modeConfig: supportedFeatures[this.state.currentMode].modeConfig,
+                selectedFeatureIndexes: [],
+                onEdit: ({ updatedData, editType }) => {
+                    this.setState({
+                        selectionPolygon: updatedData
+                    });
+
+                    if (editType === 'addFeature') {
+                        this.handleDrawPolygonService(updatedData.features[0]);
+                    }
+                }
+            };
+            layers.push(
+                new EditableGeoJsonLayer(
+                    // Workaround for error `TS2554: Expected 0 arguments, but got 1.`,
+                    // see https://github.com/uber/nebula.gl/issues/568#issuecomment-1986910461
+                    // @ts-expect-error TS2554
+                    props
+                ) as any
+            );
+        }
+
         return (
             <section id="tr__main-map">
                 <div id="tr__main-map-context-menu" className="tr__main-map-context-menu"></div>
@@ -603,6 +650,15 @@ class MainMap extends React.Component<MainMapProps, MainMapState> {
                     >
                         <MapLibreMap mapStyle={this.state.mapStyleURL} />
                     </DeckGL>
+                    <MapToolbox
+                        currentMode={this.state.currentMode}
+                        setMode={(mode: MapFeature) =>
+                            this.setState({
+                                currentMode: mode,
+                                selectionPolygon: emptyFeatureCollection as GeoJSON.FeatureCollection<GeoJSON.Polygon>
+                            })
+                        }
+                    />
                 </div>
             </section>
         );

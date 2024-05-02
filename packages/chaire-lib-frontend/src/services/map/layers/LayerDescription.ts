@@ -44,6 +44,11 @@ export type CommonLayerConfiguration = {
      * @default false
      */
     canFilter?: boolean;
+    /**
+     * Whether this layer can be selected by polygon selection
+     * @default false
+     */
+    canSelect?: boolean;
 };
 
 export type PointLayerConfiguration = CommonLayerConfiguration & {

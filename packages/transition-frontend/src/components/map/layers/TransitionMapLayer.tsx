@@ -397,6 +397,7 @@ const getScatterLayer = (
         filled: layerProperties.getColor !== undefined,
         stroked: contourColor !== undefined || contourWidth !== undefined,
         getPosition: (d) => d.geometry.coordinates,
+        pickingDepth: 10,
         updateTriggers: {
             getPosition: props.updateCount,
             getFillColor: props.updateCount

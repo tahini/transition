@@ -291,5 +291,8 @@
     "ShowingNofX": "Showing {{n}} of {{x}} results",
     "PageNofX": "Page {{n}} of {{x}}",
     "GoToPage": "Go to page",
-    "ShowN": "Show {{n}}"
+    "ShowN": "Show {{n}}",
+    "SelectPolygonMode": "Select elements with a polygon",
+    "SelectRectangleMode": "Select elements with a rectangle",
+    "DisplayMode": "Navigate map"
 }

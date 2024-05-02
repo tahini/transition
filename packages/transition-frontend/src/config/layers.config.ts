@@ -416,7 +416,8 @@ const layersConfig = {
         radiusScale: 3,
         strokeWidthScale: 3,
         autoHighlight: true,
-        pickable: () => serviceLocator.selectedObjectsManager.get('node') === undefined
+        pickable: () => serviceLocator.selectedObjectsManager.get('node') === undefined,
+        canSelect: true
     },
 
     transitNodes250mRadius: {
@@ -463,20 +464,7 @@ const layersConfig = {
         strokeWidth: 2,
         radius: 7,
         radiusScale: 3,
-        strokeWidthScale: 3,
-        'custom-shader': 'circleSpinner',
-        repaint: true,
-        paint: {
-            'circle-radius': ['interpolate', ['exponential', 2], ['zoom'], 0, 0, 10, 2, 15, 12, 20, 23],
-            'circle-color': {
-                property: 'color',
-                type: 'identity'
-            },
-            'circle-opacity': 1.0,
-            'circle-stroke-width': ['interpolate', ['exponential', 2], ['zoom'], 0, 0, 10, 0.5, 15, 5, 20, 8],
-            'circle-stroke-opacity': 1.0,
-            'circle-stroke-color': 'rgba(255,255,255,1.0)'
-        }
+        strokeWidthScale: 3
     },
 
     transitNodesSelectedErrors: {
