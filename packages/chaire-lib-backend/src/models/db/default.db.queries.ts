@@ -261,7 +261,7 @@ export const update = async <T extends GenericAttributes, U>(
         returning?: string;
         transaction?: Knex.Transaction;
     } = {}
-): Promise<string> => {
+): Promise<string | number> => {
     try {
         if (typeof id === 'string' && !uuidValidate(id)) {
             throw new TrError(
