@@ -36,6 +36,8 @@ const scheduleTable = 'tr_transit_schedules';
 const periodTable = 'tr_transit_schedule_periods';
 const tripTable = 'tr_transit_schedule_trips';
 
+// In the database, the schedule table has a uuid column, and numeric id, but this needs to be mapped respectively to the string id and integer_id
+
 const scheduleAttributesCleaner = function (attributes: Partial<ScheduleAttributes>): Partial<ScheduleAttributes> {
     const _attributes = _cloneDeep(attributes);
     delete _attributes.periods;
@@ -94,6 +96,8 @@ const scheduleTripsAttributesCleaner = function (attributes: Partial<SchedulePer
     delete _attributes.node_arrival_times_seconds;
     _attributes.node_departure_time_seconds = _attributes.node_departure_times_seconds;
     delete _attributes.node_departure_times_seconds;
+    _attributes.uuid = attributes.id || uuidV4();
+    _attributes.id = attributes.integer_id;
     return _attributes;
 };
 
@@ -112,7 +116,7 @@ const _createTrips = async function (
     options: { transaction: Knex.Transaction }
 ): Promise<{ id: string }[]> {
     const ids = (await createMultiple(knex, tripTable, scheduleTripsAttributesCleaner, periodTrips, {
-        returning: 'id',
+        returning: 'uuid',
         transaction: options.transaction
     })) as { id: string }[];
     return ids;
@@ -393,7 +397,7 @@ const getScheduleIdsForLine = async function (
         transaction?: Knex.Transaction;
     } = {}
 ) {
-    const scheduleQueries = knex(scheduleTable).select(knex.raw('id')).where('line_id', line_id);
+    const scheduleQueries = knex(scheduleTable).select(knex.raw('uuid')).where('line_id', line_id);
     if (options.transaction) {
         scheduleQueries.transacting(options.transaction);
     }
