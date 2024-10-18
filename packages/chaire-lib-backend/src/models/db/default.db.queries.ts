@@ -42,7 +42,14 @@ export const stringifyDataSourceIds = function (dataSourceIds: string[]): string
  * @param id The ID of the object
  * @returns Whether an object with the given ID exists in the table
  */
-export const exists = async (knex: Knex, tableName: string, id: string): Promise<boolean> => {
+export const exists = async (
+    knex: Knex,
+    tableName: string,
+    id: string,
+    options: {
+        transaction?: Knex.Transaction;
+    } = {}
+): Promise<boolean> => {
     if (!uuidValidate(id)) {
         throw new TrError(
             `Cannot verify if the object exists in ${tableName} because the required parameter id is missing, blank or not a valid uuid`,
@@ -51,7 +58,11 @@ export const exists = async (knex: Knex, tableName: string, id: string): Promise
         );
     }
     try {
-        const rows = await knex(tableName).count('*').where('id', id);
+        const query = knex(tableName).count('*').where('id', id);
+        if (options.transaction) {
+            query.transacting(options.transaction);
+        }
+        const rows = await query;
 
         const count = rows.length > 0 ? rows[0].count : 0;
         if (count) {
@@ -177,7 +188,7 @@ export const createMultiple = async <T extends GenericAttributes, U>(
  * @param tableName The name of the table on which to execute the operation
  * @param parser A parser function which converts the database fields to  an
  * object's attributes
- * @param query The raw select fields to query. Defaults to `*` to read all
+ * @param select The raw select fields to query. Defaults to `*` to read all
  * fields in the table
  * @param id The ID of the object to read
  * @returns The object attributes obtained after the `parser` function was run
@@ -187,8 +198,11 @@ export const read = async <T extends GenericAttributes, U>(
     knex: Knex,
     tableName: string,
     parser: ((arg: U) => Partial<T>) | undefined,
-    query = '*',
-    id: string
+    select = '*',
+    id: string,
+    options: {
+        transaction?: Knex.Transaction;
+    } = {}
 ): Promise<Partial<T>> => {
     try {
         if (!uuidValidate(id)) {
@@ -198,7 +212,11 @@ export const read = async <T extends GenericAttributes, U>(
                 'DatabaseCannotReadBecauseIdIsMissingOrInvalid'
             );
         }
-        const rows = await knex(tableName).select(knex.raw(query)).where('id', id);
+        const query = knex(tableName).select(knex.raw(select)).where('id', id);
+        if (options.transaction) {
+            query.transacting(options.transaction);
+        }
+        const rows = await query;
 
         if (rows.length !== 1) {
             throw new TrError(
