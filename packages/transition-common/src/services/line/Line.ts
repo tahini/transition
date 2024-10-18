@@ -247,10 +247,9 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
         if (this.attributes.scheduleByServiceId && this.attributes.scheduleByServiceId[serviceId]) {
             const schedule = new Schedule(
                 this.attributes.scheduleByServiceId[serviceId],
-                false,
                 this._collectionManager
             );
-            const periods = schedule.getAttributes().periods;
+            const periods = schedule.attributes.periods;
             const trips: SchedulePeriodTrip[] = [];
             const number_of_units: number[] = [];
             for (let i = 0, countI = periods.length; i < countI; i++) {
@@ -333,7 +332,7 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
     }
 
     getSchedule(serviceId: string): Schedule {
-        return new Schedule(this.attributes.scheduleByServiceId[serviceId], false, this._collectionManager);
+        return new Schedule(this.attributes.scheduleByServiceId[serviceId], this._collectionManager);
     }
 
     getSchedules(): { [key: string]: Schedule } {
@@ -497,7 +496,6 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
                         }
                     ]
                 },
-                false,
                 this._collectionManager
             );
 
@@ -524,26 +522,26 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
             }
         }
         // Update the service's scheduled lines
-        const service = this._collectionManager?.get('services')?.getById(schedule.getAttributes().service_id);
+        const service = this._collectionManager?.get('services')?.getById(schedule.attributes.service_id);
         if (service) service.addScheduledLine(this.getId());
 
-        const serviceId = schedule.getAttributes().service_id;
-        const periods = schedule.getAttributes().periods;
+        const serviceId = schedule.attributes.service_id;
+        const periods = schedule.attributes.periods;
         // remove old periodsGroup if it was changed:
         if (periods.length > 0) {
             const periodsGroups = Preferences.current.transit.periods;
-            const periodsGroupShortname = schedule.getAttributes().periods_group_shortname || '';
+            const periodsGroupShortname = schedule.attributes.periods_group_shortname || '';
             const periodsGroup = periodsGroups[periodsGroupShortname];
             const periodsShortnames = periodsGroup.periods.map((period) => {
                 return period.shortname;
             });
             if (periods.length !== periodsShortnames.length) {
-                schedule.attributes.periods = []; // reset periods if period shortnames length do not match periods length
+                schedule.set('periods', []); // reset periods if period shortnames length do not match periods length
             } else {
                 for (let i = 0, count = periods.length; i < count; i++) {
                     const period = periods[i];
                     if (!periodsShortnames.includes(period.period_shortname)) {
-                        schedule.attributes.periods = []; // reset periods if period shortnames do not match
+                        schedule.set('periods', []); // reset periods if period shortnames do not match
                         break;
                     }
                 }

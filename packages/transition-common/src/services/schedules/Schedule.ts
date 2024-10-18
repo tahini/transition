@@ -8,8 +8,7 @@ import { v4 as uuidV4 } from 'uuid';
 import _isNumber from 'lodash/isNumber';
 
 import * as Status from 'chaire-lib-common/lib/utils/Status';
-import { ObjectWithHistory } from 'chaire-lib-common/lib/utils/objects/ObjectWithHistory';
-import { GenericAttributes } from 'chaire-lib-common/lib/utils/objects/GenericObject';
+import { BaseObject, BaseAttributesWithNumericId } from 'chaire-lib-common/lib/utils/objects/BaseObjectWithNumericId';
 import serviceLocator from 'chaire-lib-common/lib/utils/ServiceLocator';
 import TransitPath from '../path/Path';
 import { _isBlank } from 'chaire-lib-common/lib/utils/LodashExtensions';
@@ -18,9 +17,8 @@ import Saveable from 'chaire-lib-common/lib/utils/objects/Saveable';
 import SaveUtils from 'chaire-lib-common/lib/services/objects/SaveUtils';
 import CollectionManager from 'chaire-lib-common/lib/utils/objects/CollectionManager';
 
-export interface SchedulePeriodTrip extends GenericAttributes {
-    schedule_id: string;
-    schedule_period_id: string;
+export interface SchedulePeriodTrip extends BaseAttributesWithNumericId {
+    schedule_period_id: number;
     path_id: string;
     unit_id?: string;
     block_id?: string;
@@ -34,8 +32,8 @@ export interface SchedulePeriodTrip extends GenericAttributes {
     nodes_can_unboard: boolean[];
 }
 
-export interface SchedulePeriod extends GenericAttributes {
-    schedule_id: string;
+export interface SchedulePeriod extends BaseAttributesWithNumericId {
+    schedule_id: number;
     outbound_path_id?: string;
     inbound_path_id?: string;
     period_shortname?: string;
@@ -51,7 +49,7 @@ export interface SchedulePeriod extends GenericAttributes {
     trips: SchedulePeriodTrip[];
 }
 
-export interface ScheduleAttributes extends GenericAttributes {
+export interface ScheduleAttributes extends BaseAttributesWithNumericId {
     line_id: string;
     service_id: string;
     periods_group_shortname?: string;
@@ -60,12 +58,13 @@ export interface ScheduleAttributes extends GenericAttributes {
     periods: SchedulePeriod[];
 }
 
-class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable {
+class Schedule extends BaseObject<ScheduleAttributes> implements Saveable {
+    
     protected static displayName = 'Schedule';
     private _collectionManager: CollectionManager;
 
-    constructor(attributes = {}, isNew: boolean, collectionManager?) {
-        super(attributes, isNew);
+    constructor(attributes = {}, collectionManager?) {
+        super(attributes);
         this._collectionManager = collectionManager ? collectionManager : serviceLocator.collectionManager;
     }
 
@@ -79,31 +78,27 @@ class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable
         return super._prepareAttributes(attributes);
     }
 
-    static symbol() {
-        return 'O';
-    }
-
-    validate() {
-        super.validate();
-        this.errors = [];
-        if (!this.getAttributes().service_id) {
-            this._isValid = false;
-            this.errors.push('transit:transitSchedule:errors:ServiceIsRequired');
+    protected _validate(): [boolean, string[]] {
+        const errors: string[] = [];
+        let isValid = false;
+        if (!this.attributes.service_id) {
+            isValid = false;
+            errors.push('transit:transitSchedule:errors:ServiceIsRequired');
         }
-        if (!this.getAttributes().periods_group_shortname) {
-            this._isValid = false;
-            this.errors.push('transit:transitSchedule:errors:PeriodsGroupIsRequired');
+        if (!this.attributes.periods_group_shortname) {
+            isValid = false;
+            errors.push('transit:transitSchedule:errors:PeriodsGroupIsRequired');
         }
-        const periods = this.getAttributes().periods;
+        const periods = this.attributes.periods;
         for (let i = 0, count = periods.length; i < count; i++) {
             const period = periods[i];
             if (period.interval_seconds && period.number_of_units) {
-                this._isValid = false;
-                this.errors.push('transit:transitSchedule:errors:ChooseIntervalOrNumberOfUnits');
+                isValid = false;
+                errors.push('transit:transitSchedule:errors:ChooseIntervalOrNumberOfUnits');
                 break;
             }
         }
-        return this._isValid;
+        return [isValid, errors];
     }
 
     getClonedAttributes(deleteSpecifics = true): Partial<ScheduleAttributes> {
@@ -122,7 +117,6 @@ class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable
                         for (let j = 0; j < trips.length; j++) {
                             const trip = trips[j] as Partial<SchedulePeriodTrip>;
                             delete trip.id;
-                            delete trip.schedule_id;
                             delete trip.schedule_period_id;
                             delete trip.created_at;
                             delete trip.updated_at;
@@ -159,7 +153,7 @@ class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable
     getAssociatedPathIds(): string[] {
         const associatedPathIds: { [pathId: string]: boolean } = {};
 
-        const periods = this.getAttributes().periods;
+        const periods = this.attributes.periods;
         for (let i = 0, countI = periods.length; i < countI; i++) {
             const period = periods[i];
             period.trips.forEach((trip) => (associatedPathIds[trip.path_id] = true));
@@ -169,7 +163,7 @@ class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable
     }
 
     getPeriod(periodShortname: string) {
-        const periods = this.getAttributes().periods;
+        const periods = this.attributes.periods;
         const index = Schedule.getPeriodIndex(periodShortname, periods);
         return index === null ? null : periods[index];
     }
@@ -502,11 +496,13 @@ class Schedule extends ObjectWithHistory<ScheduleAttributes> implements Saveable
     }
 
     async delete(socket): Promise<Status.Status<{ id: string | undefined }>> {
-        return SaveUtils.delete(this, socket, 'transitSchedule', undefined);
+        throw 'To be implemented';
+        // return SaveUtils.delete(this, socket, 'transitSchedule', undefined);
     }
 
     async save(socket) {
-        return SaveUtils.save(this, socket, 'transitSchedule', undefined);
+        throw 'To be implemented';
+        // return SaveUtils.save(this, socket, 'transitSchedule', undefined);
     }
 
     static getPluralName() {

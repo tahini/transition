@@ -11,8 +11,8 @@ import { ScheduleAttributes } from '../Schedule';
 const defaultLineId = uuidV4();
 const defaultServiceId = uuidV4();
 const defaultPathId = uuidV4();
-const defaultScheduleId = uuidV4();
-const periodIds = [uuidV4(), uuidV4(), uuidV4()];
+const defaultScheduleId = 1;
+const periodIds = [1, 2, 3];
 
 // FIXME: departure/arrival times need to be set to number[] even if they have null. Make sure ScheduleAttributes have the proper types or review how times are used.
 export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
@@ -23,6 +23,7 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
 }) => {
     return {
         id: scheduleId,
+        uuid: uuidV4(),
         allow_seconds_based_schedules: false,
         line_id: lineId,
         service_id: serviceId,
@@ -32,6 +33,7 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
         periods: [{
             // Period with start and end hours and multiple trips
             id: periodIds[0],
+            uuid: uuidV4(),
             schedule_id: scheduleId,
             inbound_path_id: undefined,
             outbound_path_id: pathId,
@@ -41,7 +43,8 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             end_at_hour: 12,
             data: {},
             trips: [{
-                id: uuidV4(),
+                id: 1,
+                uuid: uuidV4(),
                 schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
@@ -55,7 +58,8 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
                 seated_capacity: 20,
                 total_capacity: 50
             }, {
-                id: uuidV4(),
+                id: 2,
+                uuid: uuidV4(),
                 schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
@@ -69,7 +73,8 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
                 seated_capacity: 20,
                 total_capacity: 50
             }, {
-                id: uuidV4(),
+                id: 3,
+                uuid: uuidV4(),
                 schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
@@ -85,6 +90,7 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             }]
         }, {
             id: periodIds[1],
+            uuid: uuidV4(),
             schedule_id: scheduleId,
             // Period with custom start and end, with a single trip
             custom_start_at_str: "13:15",
@@ -97,7 +103,8 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             start_at_hour: 13,
             data: {},
             trips: [{
-                id: uuidV4(),
+                id: 4,
+                uuid: uuidV4(),
                 schedule_id: scheduleId,
                 schedule_period_id: periodIds[1],
                 data: {},
@@ -114,6 +121,7 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
         }, {
             // Period with custom start and end, without trips
             id: periodIds[2],
+            uuid: uuidV4(),
             schedule_id: scheduleId,
             data: {},
             custom_start_at_str: '18:00',
