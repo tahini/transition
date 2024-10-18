@@ -51,17 +51,18 @@ test('should validate', function() {
     let schedule = new Schedule(scheduleAttributes, true);
     expect(schedule.validate()).toBe(true);
 
-    const scheduleAttributesCopy = _cloneDeep(scheduleAttributes);
-    schedule = new Schedule(scheduleAttributesCopy, true);
-
-    // Test no service
-    schedule.set('service_id', undefined);
+    // Test no service id
+    const scheduleAttributesNoService = _cloneDeep(scheduleAttributes) as Partial<ScheduleAttributes>;
+    delete scheduleAttributesNoService.service_id;
+    schedule = new Schedule(scheduleAttributesNoService);
     expect(schedule.validate()).toBe(false);
     schedule.set('service_id', scheduleAttributes.service_id);
     expect(schedule.validate()).toBe(true);
 
     // Test no period group shortname
-    delete schedule.attributes.periods_group_shortname;
+    const scheduleAttributesNoPeriodGroup = _cloneDeep(scheduleAttributes) as Partial<ScheduleAttributes>;
+    delete scheduleAttributesNoPeriodGroup.periods_group_shortname;
+    schedule = new Schedule(scheduleAttributesNoPeriodGroup);
     expect(schedule.validate()).toBe(false);
     schedule.set('periods_group_shortname', scheduleAttributes.periods_group_shortname);
     expect(schedule.validate()).toBe(true);
@@ -72,6 +73,7 @@ test('should validate', function() {
     delete schedule.attributes.periods[0].interval_seconds;
     expect(schedule.validate()).toBe(true);
 });
+
 
 test('Save schedule', async () => {
     const schedule = new Schedule(scheduleAttributes, true);
@@ -84,7 +86,7 @@ test('Save schedule', async () => {
     schedule.set('mode', 'train');
     await schedule.save(eventManager);
     expect(eventManager.emit).toHaveBeenCalledTimes(2);
-    expect(eventManager.emit).toHaveBeenCalledWith('transitSchedule.update', schedule.getId(), schedule.attributes, expect.anything());
+    expect(eventManager.emit).toHaveBeenCalledWith('transitSchedule.update', schedule.id, schedule.attributes, expect.anything());
 });
 
 test('Delete schedule', async () => {
@@ -92,7 +94,7 @@ test('Delete schedule', async () => {
     const schedule = new Schedule(scheduleAttributes, true);
     await schedule.delete(eventManager);
     expect(eventManager.emit).toHaveBeenCalledTimes(1);
-    expect(eventManager.emit).toHaveBeenCalledWith('transitSchedule.delete', schedule.getId(), undefined, expect.anything());
+    expect(eventManager.emit).toHaveBeenCalledWith('transitSchedule.delete', schedule.id, undefined, expect.anything());
     expect(schedule.isDeleted()).toBe(true);
 });
 
@@ -150,7 +152,7 @@ describe('updateForAllPeriods', () => {
     test('No periods', () => {
         const testAttributes = _cloneDeep(scheduleAttributesForUpdate);
         testAttributes.periods = [];
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         schedule.updateForAllPeriods();
         expect(schedule.attributes.periods).toEqual([]);
     });
@@ -166,7 +168,7 @@ describe('updateForAllPeriods', () => {
                 period.number_of_units = 2;
             }
         });
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         schedule.updateForAllPeriods();
         expect(schedule.attributes.periods.length).toEqual(scheduleAttributesForUpdate.periods.length);
         for (let i = 0; i < schedule.attributes.periods.length; i++) {
@@ -192,7 +194,7 @@ describe('updateForAllPeriods', () => {
             period.interval_seconds = undefined;
             period.number_of_units = undefined;
         });
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
 
         // Update schedules, there should be no change
         schedule.updateForAllPeriods();
@@ -209,7 +211,7 @@ describe('updateForAllPeriods', () => {
             period.interval_seconds = 10 * 60 * (idx + 1);
             period.number_of_units = undefined;
         });
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
 
         // Update schedules, trips should be at a certain frequency
         schedule.updateForAllPeriods();
@@ -268,7 +270,7 @@ describe('generateForPeriod', () => {
         const testPeriods = _cloneDeep(smallPeriodsForUpdate);
         testPeriods[0].interval_seconds = minutesToSeconds(testFrequencyMinutes) as number;
         testAttributes.periods = testPeriods;
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         const { trips } = schedule.generateForPeriod(testPeriods[0].period_shortname as string);
 
         // Expected values
@@ -302,7 +304,7 @@ describe('generateForPeriod', () => {
         testPeriods[0].interval_seconds = minutesToSeconds(testFrequencyMinutes) as number;
         testPeriods[0].inbound_path_id = returnPath.getId();
         testAttributes.periods = testPeriods;
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         const { trips } = schedule.generateForPeriod(testPeriods[0].period_shortname as string);
 
         // Expected values
@@ -353,7 +355,7 @@ describe('generateForPeriod', () => {
         const testPeriods = _cloneDeep(smallPeriodsForUpdate);
         testPeriods[0].interval_seconds = minutesToSeconds(testFrequencyMinutes) as number;
         testAttributes.periods = testPeriods;
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         const { trips } = schedule.generateForPeriod('not a period');
         expect(trips).toEqual([]);
     });
@@ -366,7 +368,7 @@ describe('generateForPeriod', () => {
         testPeriods[0].number_of_units = testNumberOfUnits;
         testPeriods[0].inbound_path_id = returnPath.getId();
         testAttributes.periods = testPeriods;
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
         const { trips } = schedule.generateForPeriod(testPeriods[0].period_shortname as string);
 
         // Expected values
@@ -418,7 +420,7 @@ describe('generateForPeriod', () => {
         testPeriods[1].interval_seconds = minutesToSeconds(testFrequencyMinutesPeriod2) as number;
         testPeriods[1].inbound_path_id = returnPath.getId();
         testAttributes.periods = testPeriods;
-        const schedule = new Schedule(testAttributes, true, collectionManager);
+        const schedule = new Schedule(testAttributes, collectionManager);
 
         //********** Test for first period */
         const { trips } = schedule.generateForPeriod(testPeriods[0].period_shortname as string);

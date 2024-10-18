@@ -11,9 +11,8 @@ import { ScheduleAttributes } from '../Schedule';
 const defaultLineId = uuidV4();
 const defaultServiceId = uuidV4();
 const defaultPathId = uuidV4();
-const defaultScheduleId = uuidV4();
+const defaultScheduleId = 1;
 const periodIds = [1, 2, 3];
-const scheduleIntegerId = 1;
 
 // FIXME: departure/arrival times need to be set to number[] even if they have null. Make sure ScheduleAttributes have the proper types or review how times are used.
 export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
@@ -24,7 +23,7 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
 }) => {
     return {
         id: scheduleId,
-        integer_id: scheduleIntegerId,
+        uuid: uuidV4(),
         allow_seconds_based_schedules: false,
         line_id: lineId,
         service_id: serviceId,
@@ -33,9 +32,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
         data: {},
         periods: [{
             // Period with start and end hours and multiple trips
-            id: uuidV4(),
-            integer_id: periodIds[0],
-            schedule_id: scheduleIntegerId,
+            id: periodIds[0],
+            uuid: uuidV4(),
+            schedule_id: scheduleId,
             inbound_path_id: undefined,
             outbound_path_id: pathId,
             interval_seconds: 1800,        
@@ -44,8 +43,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             end_at_hour: 12,
             data: {},
             trips: [{
-                id: uuidV4(),
-                integer_id: 1,
+                id: 1,
+                uuid: uuidV4(),
+                schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
                 path_id: pathId,
@@ -58,8 +58,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
                 seated_capacity: 20,
                 total_capacity: 50
             }, {
-                id: uuidV4(),
-                integer_id: 2,
+                id: 2,
+                uuid: uuidV4(),
+                schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
                 path_id: pathId,
@@ -72,8 +73,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
                 seated_capacity: 20,
                 total_capacity: 50
             }, {
-                id: uuidV4(),
-                integer_id: 3,
+                id: 3,
+                uuid: uuidV4(),
+                schedule_id: scheduleId,
                 schedule_period_id: periodIds[0],
                 data: {},
                 path_id: pathId,
@@ -87,9 +89,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
                 total_capacity: 50
             }]
         }, {
-            id: uuidV4(),
-            integer_id: periodIds[1],
-            schedule_id: scheduleIntegerId,
+            id: periodIds[1],
+            uuid: uuidV4(),
+            schedule_id: scheduleId,
             // Period with custom start and end, with a single trip
             custom_start_at_str: "13:15",
             custom_end_at_str: "17:24",
@@ -101,8 +103,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             start_at_hour: 13,
             data: {},
             trips: [{
-                id: uuidV4(),
-                integer_id: 4,
+                id: 4,
+                uuid: uuidV4(),
+                schedule_id: scheduleId,
                 schedule_period_id: periodIds[1],
                 data: {},
                 path_id: pathId,
@@ -117,9 +120,9 @@ export const getScheduleAttributes: (params: any) => ScheduleAttributes = ({
             }]
         }, {
             // Period with custom start and end, without trips
-            id: uuidV4(),
-            integer_id: periodIds[2],
-            schedule_id: scheduleIntegerId,
+            id: periodIds[2],
+            uuid: uuidV4(),
+            schedule_id: scheduleId,
             data: {},
             custom_start_at_str: '18:00',
             custom_end_at_str: '23:00',

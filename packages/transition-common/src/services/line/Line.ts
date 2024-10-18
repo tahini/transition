@@ -249,7 +249,6 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
         if (this.attributes.scheduleByServiceId && this.attributes.scheduleByServiceId[serviceId]) {
             const schedule = new Schedule(
                 this.attributes.scheduleByServiceId[serviceId],
-                false,
                 this._collectionManager
             );
             const periods = schedule.attributes.periods;
@@ -335,7 +334,7 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
     }
 
     getSchedule(serviceId: string): Schedule {
-        return new Schedule(this.attributes.scheduleByServiceId[serviceId], false, this._collectionManager);
+        return new Schedule(this.attributes.scheduleByServiceId[serviceId], this._collectionManager);
     }
 
     getSchedules(): { [key: string]: Schedule } {
@@ -499,7 +498,6 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
                         }
                     ]
                 },
-                false,
                 this._collectionManager
             );
 
@@ -540,12 +538,12 @@ export class Line extends ObjectWithHistory<LineAttributes> implements Saveable 
                 return period.shortname;
             });
             if (periods.length !== periodsShortnames.length) {
-                schedule.attributes.periods = []; // reset periods if period shortnames length do not match periods length
+                schedule.set('periods', []); // reset periods if period shortnames length do not match periods length
             } else {
                 for (let i = 0, count = periods.length; i < count; i++) {
                     const period = periods[i];
                     if (!periodsShortnames.includes(period.period_shortname)) {
-                        schedule.attributes.periods = []; // reset periods if period shortnames do not match
+                        schedule.set('periods', []); // reset periods if period shortnames do not match
                         break;
                     }
                 }
