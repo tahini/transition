@@ -42,6 +42,7 @@ import {
     PanelSectionProps
 } from 'chaire-lib-frontend/lib/services/dashboard/DashboardContribution';
 import SimulationCollection from 'transition-common/lib/services/simulation/SimulationCollection';
+import TransitPathFilterManager from '../../services/map/TransitPathFilterManager';
 
 interface DashboardProps extends WithTranslation {
     contributions: DashboardContribution[];
@@ -108,6 +109,8 @@ class Dashboard extends React.Component<DashboardProps, DashboardState> {
         serviceLocator.addService('selectedObjectsManager', new SelectedObjectsManager(serviceLocator.eventManager));
         serviceLocator.addService('keyboardManager', KeyboardManager);
         serviceLocator.addService('notificationService', new NotificationService());
+        // Add path filter manager to service locator
+        serviceLocator.addService('pathLayerManager', new TransitPathFilterManager());
 
         serviceLocator.eventManager.emit('progress', { name: 'MapLoading', progress: 0.0 });
 

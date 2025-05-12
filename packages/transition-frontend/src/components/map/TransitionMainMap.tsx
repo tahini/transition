@@ -50,9 +50,6 @@ const MainMap = ({ zoom, center, activeSection, children }: MainMapProps) => {
         setSelectedObjectDraggingCount((prev) => prev + 1);
     }, []);
 
-    // Initialize core services
-    const pathFilterManager = useMemo(() => new TransitPathFilterManager(), []);
-
     // Create map callbacks
     const mapCallbacks = useMemo<MapCallbacks>(
         () => ({
@@ -89,8 +86,7 @@ const MainMap = ({ zoom, center, activeSection, children }: MainMapProps) => {
         activeSection,
         zoomRef,
         mapEditTool,
-        getEditToolLayers,
-        pathFilterManager
+        getEditToolLayers
     );
 
     const { onTooltip } = useMapEvents(
@@ -113,9 +109,6 @@ const MainMap = ({ zoom, center, activeSection, children }: MainMapProps) => {
 
     // Initialize services
     useEffect(() => {
-        // Add path filter manager to service locator
-        serviceLocator.addService('pathLayerManager', pathFilterManager);
-
         // Add preferences change listener
         Preferences.addChangeListener(onPreferencesChange);
 
@@ -124,7 +117,6 @@ const MainMap = ({ zoom, center, activeSection, children }: MainMapProps) => {
 
         // Clean up on unmount
         return () => {
-            serviceLocator.removeService('pathLayerManager');
             Preferences.removeChangeListener(onPreferencesChange);
         };
     }, []);
@@ -152,7 +144,7 @@ const MainMap = ({ zoom, center, activeSection, children }: MainMapProps) => {
             <div onContextMenu={(evt) => evt.preventDefault()}>
                 <DeckGL
                     ref={mapContainerRef}
-                    viewState={viewState}
+                    initialViewState={viewState}
                     controller={controllerOptions}
                     _animate={needAnimation()}
                     layers={layers}

@@ -21,8 +21,7 @@ export const useMapLayers = (
     activeSection: string,
     zoomRef: React.RefObject<number>,
     mapEditTool: MapEditTool | undefined,
-    getEditToolLayers: (props: any) => Layer<LayerProps>[],
-    pathFilterManager: any
+    getEditToolLayers: (props: any) => Layer<LayerProps>[]
 ) => {
     const [layers, setLayers] = useState<Layer<LayerProps>[]>([]);
     const [isDragging, setIsDragging] = useState(false);
@@ -162,34 +161,31 @@ export const useMapLayers = (
     }, []);
 
     // Path filter functions
-    const showPathsByAttribute = useCallback(
-        (attribute: string, value: any) => {
-            if (attribute === 'agency_id') {
-                pathFilterManager.showAgencyId(value);
-            } else if (attribute === 'line_id') {
-                pathFilterManager.showLineId(value);
-            }
-            updateMapLayersRef.current();
-        },
-        [pathFilterManager]
-    );
+    const showPathsByAttribute = useCallback((attribute: string, value: any) => {
+        const pathFilterManager = serviceLocator.getService('pathLayerManager');
+        if (attribute === 'agency_id') {
+            pathFilterManager.showAgencyId(value);
+        } else if (attribute === 'line_id') {
+            pathFilterManager.showLineId(value);
+        }
+        updateMapLayersRef.current();
+    }, []);
 
-    const hidePathsByAttribute = useCallback(
-        (attribute: string, value: any) => {
-            if (attribute === 'agency_id') {
-                pathFilterManager.hideAgencyId(value);
-            } else if (attribute === 'line_id') {
-                pathFilterManager.hideLineId(value);
-            }
-            updateMapLayersRef.current();
-        },
-        [pathFilterManager]
-    );
+    const hidePathsByAttribute = useCallback((attribute: string, value: any) => {
+        const pathFilterManager = serviceLocator.getService('pathLayerManager');
+        if (attribute === 'agency_id') {
+            pathFilterManager.hideAgencyId(value);
+        } else if (attribute === 'line_id') {
+            pathFilterManager.hideLineId(value);
+        }
+        updateMapLayersRef.current();
+    }, []);
 
     const clearPathsFilter = useCallback(() => {
+        const pathFilterManager = serviceLocator.getService('pathLayerManager');
         pathFilterManager.clearFilter();
         updateMapLayersRef.current();
-    }, [pathFilterManager]);
+    }, []);
 
     // Handle section changes
     useEffect(() => {

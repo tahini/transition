@@ -9,7 +9,11 @@ import _throttle from 'lodash/throttle';
 import { WebMercatorViewport } from '@deck.gl/core';
 import Preferences from 'chaire-lib-common/lib/config/Preferences';
 import serviceLocator from 'chaire-lib-common/lib/utils/ServiceLocator';
-import { getDefaultViewState, viewStateHasChanged } from '../defaults/TransitionMainMapDefaults';
+import {
+    getDefaultViewState,
+    shouldUpdatePreferences,
+    viewStateHasChanged
+} from '../defaults/TransitionMainMapDefaults';
 
 const THROTTLE_DELAY = 25; // milliseconds
 
@@ -46,24 +50,25 @@ export const useMapState = (initialCenter: [number, number], initialZoom: number
     );
 
     // Update user preferences
-    const updateUserPrefs = useCallback((updatedViewState) => {
+    // FIXME The mouse coordinates appear nowhere on the map, so this function is not necessary
+    /* const updateUserPrefs = useCallback((updatedViewState) => {
         // Update user preferences once per second if required
         throttledUpdatePref(updatedViewState);
         serviceLocator.eventManager.emit('map.updateMouseCoordinates', [
             updatedViewState.longitude,
             updatedViewState.latitude
         ]);
-    }, []);
+    }, []); */
 
     // Replace the existing throttled implementation with this:
     const throttledSetViewState = useCallback(
         _throttle((newViewState) => {
             updateViewportRef(newViewState);
             setViewState(newViewState);
-            updateUserPrefs(newViewState);
+            //updateUserPrefs(newViewState);
             zoomRef.current = newViewState.zoom;
         }, THROTTLE_DELAY),
-        [updateViewportRef, updateUserPrefs]
+        [updateViewportRef]
     );
 
     // View state change handler
@@ -75,6 +80,9 @@ export const useMapState = (initialCenter: [number, number], initialZoom: number
                 stateHasBeenSet.current = true;
             } else if (viewStateHasChanged(oldViewState, newViewState)) {
                 throttledSetViewState(newViewState);
+            }
+            if (shouldUpdatePreferences(oldViewState, newViewState)) {
+                throttledUpdatePref(newViewState);
             }
             return newViewState; // Allow the view state to update
         },
