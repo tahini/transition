@@ -4,20 +4,31 @@
  * This file is licensed under the MIT License.
  * License text available at https://opensource.org/licenses/MIT
  */
-
+import _uniq from 'lodash/uniq';
+import { distance as turfDistance } from '@turf/turf';
 import { TransitRoutingBaseAttributes } from 'chaire-lib-common/lib/services/routing/types';
 import { BaseOdTrip } from 'transition-common/lib/services/odTrip/BaseOdTrip';
-import transitLinesDbQueries from '../../models/db/transitLines.db.queries';
+
 import LineCollection from 'transition-common/lib/services/line/LineCollection';
 import AgencyCollection from 'transition-common/lib/services/agency/AgencyCollection';
-import transitAgenciesDbQueries from '../../models/db/transitAgencies.db.queries';
 import Line from 'transition-common/lib/services/line/Line';
 import ServiceCollection from 'transition-common/lib/services/service/ServiceCollection';
+
+import transitAgenciesDbQueries from '../../models/db/transitAgencies.db.queries';
 import transitServicesDbQueries from '../../models/db/transitServices.db.queries';
+import transitLinesDbQueries from '../../models/db/transitLines.db.queries';
+import schedulesDbQueries from '../../models/db/transitSchedules.db.queries';
+import pathsDbQueries from '../../models/db/transitPaths.db.queries';
+import PathCollection from 'transition-common/lib/services/path/PathCollection';
+import { PathAttributes } from 'transition-common/lib/services/path/Path';
+
 
 type DeclaredLine = { line: string; agency: string };
 
 export type TransitValidationMessage =
+| {
+    type: 'noDeclaredTrip';
+}
     | {
           type: 'lineNotFound';
           line: DeclaredLine[];
@@ -48,6 +59,7 @@ export class TransitRoutingValidation {
     private _lineCollection: LineCollection | undefined = undefined;
     private _agencyCollection: AgencyCollection | undefined = undefined;
     private _serviceCollection: ServiceCollection | undefined = undefined;
+    private _pathCollection: PathCollection | undefined = undefined;
 
     constructor(private routingParameters: TransitValidationAttributes) {
         // Nothing else to do
@@ -73,6 +85,11 @@ export class TransitRoutingValidation {
         const services = await transitServicesDbQueries.collection();
         serviceCollection.loadFromCollection(services);
         this._serviceCollection = serviceCollection;
+
+        const pathCollection = new PathCollection([], {});
+        const pathsGeojson = await pathsDbQueries.geojsonCollection({ noNullGeo: true });
+        pathCollection.loadFromCollection(pathsGeojson.features);
+        this._pathCollection = pathCollection;
     };
 
     run = async ({
@@ -84,6 +101,13 @@ export class TransitRoutingValidation {
         dateOfTrip: Date;
         declaredTrip: DeclaredLine[];
     }): Promise<true | TransitValidationMessage> => {
+        // No declared trip, return with a noDeclaredTrip message
+        if (declaredTrip.length === 0) {
+            return {
+                type: 'noDeclaredTrip'
+            };
+        }
+
         await this.prepareData();
 
         // Identify the lines use by the declared trip
@@ -110,6 +134,7 @@ export class TransitRoutingValidation {
         // For each line, get the services at the given date
         const linesUsed = declaredTransitLines.map((declaredLine) => declaredLine.line!);
         const linesWithSchedules = await transitLinesDbQueries.collectionWithSchedules(linesUsed);
+        console.log('lines with schedules', linesWithSchedules);
         const linesWithFilteredServices = linesWithSchedules.map((line, idx) => {
             const schedulesByServiceId = line.attributes.scheduleByServiceId || {};
             const services = Object.entries(schedulesByServiceId).filter(([serviceId, _schedule]) => {
@@ -144,23 +169,68 @@ export class TransitRoutingValidation {
                 : this.routingParameters.maxTotalTravelTimeSeconds || 180 * 60);
         const timeRangeEnd =
             timeRangeStart +
-            (this.routingParameters.bufferSeconds || 0) * 2 +
-            (odTrip.attributes.timeType === 'departure'
-                ? 0
-                : this.routingParameters.maxTotalTravelTimeSeconds || 180 * 60);
+            (this.routingParameters.bufferSeconds || 0) * 2 + // Re-add buffer from range start and add another one at the end
+            (this.routingParameters.maxTotalTravelTimeSeconds || 180 * 60);
 
         // Are there trips for each line? If not, return with a noServiceOnLineAtTime message
-        const linesWithTrips = linesWithFilteredServices.map((lineWithTrip) => {
-            lineWithTrip.validServices.map((schedule) => {});
+        const tripsInRange = await schedulesDbQueries.getTripsInTimeRange({
+            rangeStart: timeRangeStart,
+            rangeEnd: timeRangeEnd,
+            lineIds: linesWithFilteredServices.map((line) => line.line.getId()),
+            serviceIds: _uniq(linesWithFilteredServices.flatMap((line) => line.validServices.map((service) => service.service_id))),
         });
 
-        // Get the paths for each trip in time range
+        const tripsByLine = linesWithFilteredServices.map((line) => {
+            const trips = tripsInRange.filter((trip) => trip.line_id === line.line.getId());
+            return {
+                line: line.line,
+                trips: trips,
+                declaredLine: line.declaredLine
+            };
+        });
+        const lineWithNoTrips = tripsByLine.filter((tripByLine) => tripByLine.trips.length === 0);
+        if (lineWithNoTrips.length > 0) {
+            return {
+                type: 'noServiceOnLineAtTime',
+                line: lineWithNoTrips.map((line) => line.declaredLine)
+            };
+        }
+
+        // Get the paths and nodes for each trip in time range
+        const paths = _uniq(tripsInRange.map((trip) => trip.path_id)).map(pathId => this._pathCollection!.getById(pathId)!);
+        const pathsAndNodes: { path: GeoJSON.Feature<GeoJSON.LineString, PathAttributes>, nodes: GeoJSON.Point[] }[] = paths.map((path) => {
+            // Extract the nodes' exact positions on the path from the segment's
+            // data, ie the index in the coordinates of the start of this
+            // segment
+            const nodes = path?.properties.segments.map((segment) => ({
+                type: 'Point' as const,
+                coordinates: path.geometry.coordinates[segment]
+            }));
+            return {
+                path: path!,
+                nodes
+            };
+        })
 
         // [For each combination of lines entered]
         // Get the nearest entry node to the origin in the first line
+        const entryLine = linesUsed[0];
+        const entryPaths = pathsAndNodes.filter(pathAndNodes => pathAndNodes.path.properties.line_id === entryLine.id);
+        const accessEgressDistance = this.routingParameters.maxAccessEgressTravelTimeSeconds! * this.routingParameters.walkingSpeedMps!;
+        const possibleEntryNodes = entryPaths.map((pathAndNodes) => {
+            return pathAndNodes.nodes.map((node) => turfDistance(odTrip.attributes.origin_geography, node));
+        });
+        /*if (possibleEntryNodes.length === 0) {
+            return {
+                type: 'walkingDistanceTooLong',
+                origin: { line: entryLine.shortname, agency: entryLine.agency.shortname },
+                distance: accessEgressDistance
+            };
+        } */
+
         // Get the nearest exit node to the destination in the last line
         // Get nearest entry/exit node pairs for each transfer lines
-        // Calculate walking distances. Are they plausible? If not, return with a 'walkingDistanceTooLong' message
+        // Calculate walking distances on the network. Are they plausible? If not, return with a 'walkingDistanceTooLong' message
 
         // Verify if the service is compatible with the declared trip
         // Set prevArrivalTime to the time of departure - buffer
