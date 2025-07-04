@@ -17,18 +17,20 @@ import ServiceCollection from 'transition-common/lib/services/service/ServiceCol
 import transitAgenciesDbQueries from '../../models/db/transitAgencies.db.queries';
 import transitServicesDbQueries from '../../models/db/transitServices.db.queries';
 import transitLinesDbQueries from '../../models/db/transitLines.db.queries';
+import transitPathsDbQueries from '../../models/db/transitPaths.db.queries';
 import schedulesDbQueries from '../../models/db/transitSchedules.db.queries';
-import pathsDbQueries from '../../models/db/transitPaths.db.queries';
+import transitNodeTransferableDbQueries from '../../models/db/transitNodeTransferable.db.queries';
 import PathCollection from 'transition-common/lib/services/path/PathCollection';
 import { PathAttributes } from 'transition-common/lib/services/path/Path';
-
+import routingServiceManager from 'chaire-lib-common/lib/services/routing/RoutingServiceManager';
+import { _isBlank } from 'chaire-lib-common/lib/utils/LodashExtensions';
 
 type DeclaredLine = { line: string; agency: string };
 
 export type TransitValidationMessage =
-| {
-    type: 'noDeclaredTrip';
-}
+    | {
+          type: 'noDeclaredTrip';
+      }
     | {
           type: 'lineNotFound';
           line: DeclaredLine[];
@@ -45,14 +47,18 @@ export type TransitValidationMessage =
           type: 'walkingDistanceTooLong';
           origin: 'origin' | DeclaredLine;
           destination: 'destination' | DeclaredLine;
-          distance: number;
       }
     | {
           type: 'incompatibleTrip';
+          originLine: DeclaredLine;
+          destinationLine: DeclaredLine;
       };
 
-export type TransitValidationAttributes = TransitRoutingBaseAttributes & {
-    bufferSeconds?: number; // Buffer time to subtract to the trip departure time or add to the arrival time
+/**
+ * Type for the validation parameters, they should all be mandatory at this point
+ */
+export type TransitValidationAttributes = Required<TransitRoutingBaseAttributes> & {
+    bufferSeconds: number; // Buffer time to subtract to the trip departure time or add to the arrival time
 };
 
 export class TransitRoutingValidation {
@@ -66,7 +72,7 @@ export class TransitRoutingValidation {
     }
 
     private prepareData = async () => {
-        if (this._lineCollection && this._agencyCollection && this._serviceCollection) {
+        if (this._lineCollection && this._agencyCollection && this._serviceCollection && this._pathCollection) {
             // Data already prepared
             return;
         }
@@ -87,7 +93,7 @@ export class TransitRoutingValidation {
         this._serviceCollection = serviceCollection;
 
         const pathCollection = new PathCollection([], {});
-        const pathsGeojson = await pathsDbQueries.geojsonCollection({ noNullGeo: true });
+        const pathsGeojson = await transitPathsDbQueries.geojsonCollection({ noNullGeo: true });
         pathCollection.loadFromCollection(pathsGeojson.features);
         this._pathCollection = pathCollection;
     };
@@ -134,7 +140,6 @@ export class TransitRoutingValidation {
         // For each line, get the services at the given date
         const linesUsed = declaredTransitLines.map((declaredLine) => declaredLine.line!);
         const linesWithSchedules = await transitLinesDbQueries.collectionWithSchedules(linesUsed);
-        console.log('lines with schedules', linesWithSchedules);
         const linesWithFilteredServices = linesWithSchedules.map((line, idx) => {
             const schedulesByServiceId = line.attributes.scheduleByServiceId || {};
             const services = Object.entries(schedulesByServiceId).filter(([serviceId, _schedule]) => {
@@ -149,7 +154,7 @@ export class TransitRoutingValidation {
             return { line, validServices, declaredLine: declaredTransitLines[idx].declaredLine };
         });
 
-        // If any line has not service, return with a noServiceOnLine message
+        // If any line has no service, return with a noServiceOnLine message
         const linesWithoutService = linesWithFilteredServices.filter(
             (line) => Object.keys(line.validServices).length === 0
         );
@@ -177,7 +182,9 @@ export class TransitRoutingValidation {
             rangeStart: timeRangeStart,
             rangeEnd: timeRangeEnd,
             lineIds: linesWithFilteredServices.map((line) => line.line.getId()),
-            serviceIds: _uniq(linesWithFilteredServices.flatMap((line) => line.validServices.map((service) => service.service_id))),
+            serviceIds: _uniq(
+                linesWithFilteredServices.flatMap((line) => line.validServices.map((service) => service.service_id))
+            )
         });
 
         const tripsByLine = linesWithFilteredServices.map((line) => {
@@ -196,42 +203,98 @@ export class TransitRoutingValidation {
             };
         }
 
-        // Get the paths and nodes for each trip in time range
-        const paths = _uniq(tripsInRange.map((trip) => trip.path_id)).map(pathId => this._pathCollection!.getById(pathId)!);
-        const pathsAndNodes: { path: GeoJSON.Feature<GeoJSON.LineString, PathAttributes>, nodes: GeoJSON.Point[] }[] = paths.map((path) => {
-            // Extract the nodes' exact positions on the path from the segment's
-            // data, ie the index in the coordinates of the start of this
-            // segment
+        // Get the paths and stop coordinates for each trip in time range
+        const paths = _uniq(tripsInRange.map((trip) => trip.path_id)).map(
+            (pathId) => this._pathCollection!.getById(pathId)!
+        );
+        const pathsAndNodes: {
+            path: GeoJSON.Feature<GeoJSON.LineString, PathAttributes>;
+            nodes: GeoJSON.Feature<GeoJSON.Point>[];
+        }[] = paths.map((path) => {
+            // Extract the nodes' exact positions on the path from the
+            // segment's data, ie the index in the coordinates of the start
+            // of this segment. This will be used for access and egress
+            // exact calculation, we don't need to node's coordinates
             const nodes = path?.properties.segments.map((segment) => ({
-                type: 'Point' as const,
-                coordinates: path.geometry.coordinates[segment]
+                type: 'Feature' as const,
+                geometry: { type: 'Point' as const, coordinates: path.geometry.coordinates[segment] },
+                properties: {}
             }));
             return {
                 path: path!,
                 nodes
             };
-        })
+        });
 
         // [For each combination of lines entered]
+        // First, get the transferable nodes for each line pairs in the declared
+        // trip, they should be already calculated in the database
+        for (let i = 0; i < declaredTrip.length - 1; i++) {
+            const fromLine = linesUsed[i];
+            const toLine = linesUsed[i + 1];
+
+            // Get the paths for the lines
+            const fromLinePaths = pathsAndNodes.filter(
+                (pathAndNodes) => pathAndNodes.path.properties.line_id === fromLine.id
+            );
+            const toLinePaths = pathsAndNodes.filter(
+                (pathAndNodes) => pathAndNodes.path.properties.line_id === toLine.id
+            );
+
+            // Get the transferable nodes between the two lines
+            const transferableNodePairs = await transitNodeTransferableDbQueries.getTransferableNodePairs({
+                pathsFrom: fromLinePaths.map((pathAndNodes) => pathAndNodes.path.properties.id),
+                pathsTo: toLinePaths.map((pathAndNodes) => pathAndNodes.path.properties.id)
+            });
+
+            if (transferableNodePairs.length === 0) {
+                return {
+                    type: 'incompatibleTrip',
+                    originLine: declaredTransitLines[i].declaredLine,
+                    destinationLine: declaredTransitLines[i + 1].declaredLine
+                };
+            }
+        }
+
         // Get the nearest entry node to the origin in the first line
-        const entryLine = linesUsed[0];
-        const entryPaths = pathsAndNodes.filter(pathAndNodes => pathAndNodes.path.properties.line_id === entryLine.id);
-        const accessEgressDistance = this.routingParameters.maxAccessEgressTravelTimeSeconds! * this.routingParameters.walkingSpeedMps!;
-        const possibleEntryNodes = entryPaths.map((pathAndNodes) => {
-            return pathAndNodes.nodes.map((node) => turfDistance(odTrip.attributes.origin_geography, node));
-        });
-        /*if (possibleEntryNodes.length === 0) {
+        const firstLineUsed = linesUsed[0];
+        const firstPossiblePaths = pathsAndNodes.filter(
+            (pathAndNodes) => pathAndNodes.path.properties.line_id === firstLineUsed.id
+        );
+        const possibleAccessNodes = await this.getAccessibleNodes(
+            'from',
+            odTrip.attributes.origin_geography,
+            firstPossiblePaths[0].nodes,
+            this.routingParameters.maxAccessEgressTravelTimeSeconds!
+        );
+        if (possibleAccessNodes.length === 0) {
             return {
                 type: 'walkingDistanceTooLong',
-                origin: { line: entryLine.shortname, agency: entryLine.agency.shortname },
-                distance: accessEgressDistance
+                origin: 'origin',
+                destination: declaredTrip[0]
             };
-        } */
+        }
 
         // Get the nearest exit node to the destination in the last line
-        // Get nearest entry/exit node pairs for each transfer lines
-        // Calculate walking distances on the network. Are they plausible? If not, return with a 'walkingDistanceTooLong' message
+        const lastLineUsed = linesUsed[linesUsed.length - 1];
+        const lastPossiblePaths = pathsAndNodes.filter(
+            (pathAndNodes) => pathAndNodes.path.properties.line_id === lastLineUsed.id
+        );
+        const possibleEgressNodes = await this.getAccessibleNodes(
+            'to',
+            odTrip.attributes.destination_geography,
+            lastPossiblePaths[0].nodes,
+            this.routingParameters.maxAccessEgressTravelTimeSeconds!
+        );
+        if (possibleEgressNodes.length === 0) {
+            return {
+                type: 'walkingDistanceTooLong',
+                origin: declaredTrip[declaredTrip.length - 1],
+                destination: 'destination'
+            };
+        }
 
+        // TODO Should we make sure there are compatible trips?
         // Verify if the service is compatible with the declared trip
         // Set prevArrivalTime to the time of departure - buffer
         // For each line
@@ -241,5 +304,47 @@ export class TransitRoutingValidation {
         // Trip found, return true
 
         return true;
+    };
+
+    private getAccessibleNodes = async (
+        direction: 'from' | 'to',
+        refGeometry: GeoJSON.Point,
+        points: GeoJSON.Feature<GeoJSON.Point>[],
+        maxWalkingTravelTimeSeconds: number
+    ): Promise<GeoJSON.Feature<GeoJSON.Point>[]> => {
+        // Calculate points in bird distance first
+        const walkingDistance = maxWalkingTravelTimeSeconds * this.routingParameters.walkingSpeedMps!;
+        const pointsInBirdDistance = points.filter((point) => turfDistance(refGeometry, point) <= walkingDistance);
+
+        if (pointsInBirdDistance.length === 0) {
+            return [];
+        }
+
+        // Calculat the actual distance using the routing service
+        const refFeature = { type: 'Feature', geometry: refGeometry, properties: {} } as GeoJSON.Feature<GeoJSON.Point>;
+        const routingService = routingServiceManager.getRoutingServiceForEngine('engine');
+        const routingResultJson =
+            direction === 'from'
+                ? await routingService.tableFrom({
+                    mode: 'walking',
+                    origin: refFeature,
+                    destinations: pointsInBirdDistance
+                })
+                : await routingService.tableTo({
+                    mode: 'walking',
+                    origins: pointsInBirdDistance,
+                    destination: refFeature
+                });
+
+        const distances = routingResultJson.distances;
+        const accessibleNodes: GeoJSON.Feature<GeoJSON.Point>[] = [];
+        for (let i = 0, count = pointsInBirdDistance.length; i < count; i++) {
+            const nodeInBirdRadius = pointsInBirdDistance[i];
+            const travelDistance = distances[i];
+            if (!_isBlank(travelDistance) && travelDistance <= walkingDistance) {
+                accessibleNodes.push(nodeInBirdRadius);
+            }
+        }
+        return accessibleNodes;
     };
 }
