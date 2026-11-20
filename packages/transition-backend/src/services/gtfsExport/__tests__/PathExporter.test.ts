@@ -101,8 +101,12 @@ const path2Distances = path2.getCoordinatesDistanceTraveledMeters().map((dist) =
 
 jest.mock('../../../models/db/transitPaths.db.queries', () => {
     return {
-        geojsonCollection: jest.fn().mockImplementation(async () => {
-            return { type: 'FeatureCollection', features: [path1.toGeojson(), path2.toGeojson()] };
+        readObjects: jest.fn().mockImplementation(async ({ pathIds }) => {
+            const allPaths = [pathAttributes1, pathAttributes2]
+            if (pathIds === undefined) {
+                return allPaths
+            }
+            return allPaths.filter(pathAttributes => pathIds.includes(pathAttributes.id));
         })
     };
 });

@@ -6,17 +6,19 @@
  */
 import { createWriteStream } from 'fs';
 import { v4 as uuidV4 } from 'uuid';
+import _cloneDeep from 'lodash/cloneDeep';
 
 import { exportSchedule } from '../ScheduleExporter';
 import Path from 'transition-common/lib/services/path/Path';
 import { ScheduleAttributes } from 'transition-common/lib/services/schedules/Schedule';
 import schedulesDbQueries from '../../../models/db/transitSchedules.db.queries';
+import transitPathsDbQueries from '../../../models/db/transitPaths.db.queries';
 
 jest.mock('fs', () => {
     // Require the original module to not be mocked...
     const originalModule =
       jest.requireActual<typeof import('fs')>('fs');
-  
+
     return {
       ...originalModule,
       createWriteStream: jest.fn()
@@ -35,20 +37,25 @@ const mockWriteStopTimeStream = {
 const mockCreateStream = createWriteStream as jest.MockedFunction<any>
 mockCreateStream.mockImplementation((filePath: string) => filePath.includes('trips.txt') ? mockWriteTripStream : mockWriteStopTimeStream);
 
+
+const lineId = uuidV4();
+const serviceId = uuidV4();
+const serviceId2 = uuidV4();
+const scheduleIntegerId = 4;
+
 // Only need one single path for tests, 4 stops, but 5 coordinates
 const pathAttributes = {
     id: uuidV4(),
     name: 'PathFull',
     geography: { type: 'LineString' as const, coordinates: [[-73, 45], [-73.0011, 45], [-73.003, 45.001], [-73.003, 45.002], [-73.004, 45.002]] },
-    direction: 'outbound',
-    line_id: uuidV4(),
+    direction: 'outbound' as const,
+    line_id: lineId,
     is_enabled: true,
     nodes: [uuidV4(), uuidV4(), uuidV4(), uuidV4()],
     stops: [uuidV4(), uuidV4(), uuidV4(), uuidV4()],
     segments: [0, 1, 2, 4],
-    mode: 'bus',
-    data: {
-    },
+    mode: 'bus' as const,
+    data: {} as any,
     is_frozen: false
 };
 
@@ -60,13 +67,8 @@ const pathAttributes2 = {
 }
 
 const path = new Path(pathAttributes, false);
-const path2 = new Path(pathAttributes2, false);
 // Convert distances in km, same coordinates for both patsh
 const pathDistances = path.getCoordinatesDistanceTraveledMeters().map(dist => Math.round(dist) / 1000);
-const lineId = uuidV4();
-const serviceId = uuidV4();
-const serviceId2 = uuidV4();
-const scheduleIntegerId = 4;
 
 // Schedule with many periods/trips, but one path
 const scheduleAttributes1: ScheduleAttributes = {
@@ -238,11 +240,16 @@ const mockReadForLines = schedulesDbQueries.readForLines as jest.MockedFunction<
 
 jest.mock('../../../models/db/transitPaths.db.queries', () => {
     return {
-        geojsonCollection: jest.fn().mockImplementation(async () => {
-            return { type: 'FeatureCollection', features: [path.toGeojson(), path2.toGeojson()] };
+        readObjects: jest.fn().mockImplementation(async ({ lineIds }) => {
+            const allPaths = [pathAttributes, pathAttributes2]
+            if (lineIds === undefined) {
+                return allPaths
+            }
+            return allPaths.filter(pathAttributes => lineIds.includes(pathAttributes.line_id));
         })
     }
 });
+const mockReadPathObjects = transitPathsDbQueries.readObjects as jest.MockedFunction<typeof transitPathsDbQueries.readObjects>;
 
 const sluggedServiceId = 'Service';
 const sluggedServiceId2 = 'Service2';
@@ -388,6 +395,14 @@ test('Test exporting multiple chunks of schedules', async () => {
 test('Test exporting multiple chunks of lines', async () => {
     // Request writing schedules for 200 lines, to force 4 chunks of lines
     const lineIds = Array.from({ length: 200 }).map(() => uuidV4());
+    // Mock the read path object so there is at least one path returned for each chunk
+    [0, 50, 100, 150].forEach((idx) => {
+        mockReadPathObjects.mockResolvedValueOnce([{
+            ..._cloneDeep(pathAttributes),
+            line_id: lineIds[idx]
+        }])
+    });
+
     const writeCount = 4;
     // Actual schedules is not important, just need some to write
     mockReadForLines.mockResolvedValueOnce([scheduleAttributes1]);
@@ -405,6 +420,13 @@ test('Test exporting multiple chunks of lines', async () => {
     expect(mockReadForLines).toHaveBeenCalledWith(lineIds.slice(50, 100));
     expect(mockReadForLines).toHaveBeenCalledWith(lineIds.slice(100, 150));
     expect(mockReadForLines).toHaveBeenCalledWith(lineIds.slice(150, 200));
+    // Path objects should have been read for each chunk
+    expect(mockReadPathObjects).toHaveBeenCalledTimes(writeCount);
+    expect(mockReadPathObjects).toHaveBeenCalledWith({ lineIds: lineIds.slice(0, 50) });
+    expect(mockReadPathObjects).toHaveBeenCalledWith({ lineIds: lineIds.slice(50, 100) });
+    expect(mockReadPathObjects).toHaveBeenCalledWith({ lineIds: lineIds.slice(100, 150) });
+    expect(mockReadPathObjects).toHaveBeenCalledWith({ lineIds: lineIds.slice(150, 200) });
+
     expect(mockWriteTripStream.write).toHaveBeenCalledTimes(writeCount);
     expect(mockWriteStopTimeStream.write).toHaveBeenCalledTimes(writeCount);
 });
@@ -543,7 +565,7 @@ test('Test error handling - both arrival_time and departure_time missing', async
 test('Test GTFS compliance - handles >24h times for midnight-crossing schedules', async () => {
     // Test that times exceeding 24 hours are properly formatted for late-night schedules
     // GTFS specification allows hours >= 24 for services that cross midnight
-    
+
     const scheduleWith24hPlus: ScheduleAttributes = {
         ...scheduleAttributes1,
         periods: [
@@ -573,17 +595,17 @@ test('Test GTFS compliance - handles >24h times for midnight-crossing schedules'
     };
 
     mockReadForLines.mockResolvedValueOnce([scheduleWith24hPlus]);
-    const response = await exportSchedule([lineId], { 
-        directoryPath: 'test', 
-        quotesFct: quoteFct, 
-        serviceToGtfsId 
+    const response = await exportSchedule([lineId], {
+        directoryPath: 'test',
+        quotesFct: quoteFct,
+        serviceToGtfsId
     });
 
     expect(response.status).toEqual('success');
     expect(mockWriteStopTimeStream.write).toHaveBeenCalled();
-    
+
     const stopTimesOutput = mockWriteStopTimeStream.write.mock.calls[0][0] as string;
-    const stopTimesLines = stopTimesOutput.split('\n').filter(line => 
+    const stopTimesLines = stopTimesOutput.split('\n').filter(line =>
         line.trim() && !line.startsWith('"trip_id"')
     );
 
@@ -594,7 +616,7 @@ test('Test GTFS compliance - handles >24h times for midnight-crossing schedules'
     const firstStopFields = stopTimesLines[0].split(',');
     const firstArrival = firstStopFields[1].replace(/"/g, '');
     const firstDeparture = firstStopFields[2].replace(/"/g, '');
-    
+
     expect(firstArrival).toBe('25:10:00');
     expect(firstDeparture).toBe('25:10:00');
 
@@ -602,7 +624,7 @@ test('Test GTFS compliance - handles >24h times for midnight-crossing schedules'
     const secondStopFields = stopTimesLines[1].split(',');
     const secondArrival = secondStopFields[1].replace(/"/g, '');
     const secondDeparture = secondStopFields[2].replace(/"/g, '');
-    
+
     expect(secondArrival).toBe('27:10:00');
     expect(secondDeparture).toBe('27:30:00');
 

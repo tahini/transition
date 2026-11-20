@@ -10,12 +10,11 @@ import type * as GtfsTypes from 'gtfs-types';
 
 import { gtfsFiles } from 'transition-common/lib/services/gtfs/GtfsFiles';
 import dbQueries from '../../models/db/transitSchedules.db.queries';
-import pathDbQueries from '../../models/db/transitPaths.db.queries';
 import { fileManager } from 'chaire-lib-backend/lib/utils/filesystem/fileManager';
 import type { ScheduleAttributes } from 'transition-common/lib/services/schedules/Schedule';
-import PathCollection from 'transition-common/lib/services/path/PathCollection';
 import { secondsSinceMidnightToTimeStr } from 'chaire-lib-common/lib/utils/DateTimeUtils';
 import type Path from 'transition-common/lib/services/path/Path';
+import BackendPathRepository from '../transitObjects/transitPaths/BackendPathRepository';
 
 // will return an object with trips and stop_times arrays
 // + nodeIds (the node ids used in this schedule)
@@ -24,7 +23,7 @@ const objectToGtfs = (
     schedule: ScheduleAttributes,
     lineId: string,
     gtfsServiceId: string,
-    pathCollection: PathCollection
+    paths: Path[]
 ): {
     trips: GtfsTypes.Trip[];
     stopTimes: GtfsTypes.StopTime[];
@@ -45,15 +44,14 @@ const objectToGtfs = (
         for (let tripIdx = 0, countJ = trips.length; tripIdx < countJ; tripIdx++) {
             const trip = trips[tripIdx];
             if (!pathsById[trip.path_id]) {
-                const pathGeojson = pathCollection.getById(trip.path_id);
-                if (!pathGeojson) {
+                const path = paths.find((path) => path.id === trip.path_id);
+                if (!path) {
                     console.error('Path not found: ' + trip.path_id + ' for line ' + lineId);
                     continue;
                 }
-                const newPath = pathCollection.newObject(pathGeojson);
-                pathsById[trip.path_id] = { path: newPath, distances: newPath.getCoordinatesDistanceTraveledMeters() };
-                pathIds[newPath.id] = true;
-                const nodes = newPath.attributes.nodes;
+                pathsById[trip.path_id] = { path, distances: path.getCoordinatesDistanceTraveledMeters() };
+                pathIds[path.id] = true;
+                const nodes = path.attributes.nodes;
                 for (let nodeI = 0, countNodes = nodes.length; nodeI < countNodes; nodeI++) {
                     nodeIds[nodes[nodeI]] = true;
                 }
@@ -146,7 +144,7 @@ const exportScheduleForLineSubset = async (
         shouldWriteStopTimesHeader: boolean;
         stopTimesStream: fs.WriteStream;
         tripStream: fs.WriteStream;
-        pathCollection: PathCollection;
+        paths: Path[];
         quotesFct: (value: unknown) => boolean;
         serviceToGtfsId: { [key: string]: string };
     }
@@ -175,12 +173,7 @@ const exportScheduleForLineSubset = async (
         const gtfsScheduleData = scheduleBatch.map((schedule) =>
             !schedule.service_id || !options.serviceToGtfsId[schedule.service_id]
                 ? { trips: [], stopTimes: [], nodeIds: {}, pathIds: {} }
-                : objectToGtfs(
-                    schedule,
-                    schedule.line_id,
-                    options.serviceToGtfsId[schedule.service_id],
-                    options.pathCollection
-                )
+                : objectToGtfs(schedule, schedule.line_id, options.serviceToGtfsId[schedule.service_id], options.paths)
         );
         const gtfsTrips = gtfsScheduleData.flatMap((gtfsData) => gtfsData.trips);
         const gtfsStopTimes = gtfsScheduleData.flatMap((gtfsData) => gtfsData.stopTimes);
@@ -261,11 +254,6 @@ export const exportSchedule = async (
         const pathIds: { [key: string]: boolean } = {};
         const nodeIds: { [key: string]: boolean } = {};
 
-        // Fetch the path collection
-        const paths = await pathDbQueries.geojsonCollection();
-        const pathCollection = new PathCollection([], {});
-        pathCollection.loadFromCollection(paths.features);
-
         let shouldWriteTripHeader = true;
         let shouldWriteStopTimesHeader = true;
 
@@ -274,6 +262,11 @@ export const exportSchedule = async (
         while (lineIdsCopy.length > 0) {
             // To avoid out of memory exceptions, export schedules in chunks of 50 lines
             const linesToExport = lineIdsCopy.splice(0, lineIdsBatchSize);
+
+            // Fetch the paths for this line chunk
+            const pathRepository = new BackendPathRepository();
+            const paths = await pathRepository.getObjects({ lineIds: linesToExport });
+
             const {
                 pathIds: batchPathIds,
                 nodeIds: batchNodeIds,
@@ -284,7 +277,7 @@ export const exportSchedule = async (
                 tripStream,
                 shouldWriteTripHeader,
                 shouldWriteStopTimesHeader,
-                pathCollection,
+                paths,
                 quotesFct: options.quotesFct,
                 serviceToGtfsId: options.serviceToGtfsId
             });

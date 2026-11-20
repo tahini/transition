@@ -10,10 +10,9 @@ import { unparse } from 'papaparse';
 
 import { gtfsFiles } from 'transition-common/lib/services/gtfs/GtfsFiles';
 import type Path from 'transition-common/lib/services/path/Path';
-import dbQueries from '../../models/db/transitPaths.db.queries';
-import PathCollection from 'transition-common/lib/services/path/PathCollection';
-import TrError from 'chaire-lib-common/lib/utils/TrError';
 import { fileManager } from 'chaire-lib-backend/lib/utils/filesystem/fileManager';
+import BackendPathRepository from '../transitObjects/transitPaths/BackendPathRepository';
+import TrError from 'chaire-lib-common/lib/utils/TrError';
 
 const objectToGtfs = (path: Path, includeCustomFields = false): GtfsTypes.Shapes[] => {
     // will export an array of shape data, shape_id = path_id
@@ -60,18 +59,17 @@ export const exportPath = async (
     fileManager.truncateFileAbsolute(filePath);
     const shapeStream = fs.createWriteStream(filePath);
 
-    // Fetch the path collection
-    const paths = await dbQueries.geojsonCollection();
-    const pathCollection = new PathCollection([], {});
-    pathCollection.loadFromCollection(paths.features);
+    // Fetch the path collection for requested paths
+    const pathRepository = new BackendPathRepository();
+    const paths = await pathRepository.getObjects({ pathIds });
 
     try {
         const gtfsShapes = pathIds.map((pathId) => {
-            const pathGeojson = pathCollection.getById(pathId);
-            if (!pathGeojson) {
+            const path = paths.find((p) => p.id === pathId);
+            // Some paths may have null geographies, if they were made at a time where Transition allowed to save path with errors or not data
+            if (path === undefined || path.attributes.geography === undefined) {
                 throw new TrError(`Unknow path for GTFS export ${pathId}`, 'GTFSEXP0002');
             }
-            const path = pathCollection.newObject(pathGeojson);
             const gtfsShape = objectToGtfs(path, options.includeTransitionFields || false);
             return gtfsShape;
         });
