@@ -17,6 +17,7 @@ import servicesDbQueries from '../transitServices.db.queries';
 import agencyDbQueries from '../transitAgencies.db.queries'
 import GeojsonCollection from 'transition-common/lib/services/path/PathCollection';
 import ObjectClass from 'transition-common/lib/services/path/Path';
+import type { PathQueryFilter } from 'transition-common/lib/services/path/IPathRepository';
 import TrError from 'chaire-lib-common/lib/utils/TrError';
 
 const objectName = 'path';
@@ -97,18 +98,47 @@ const updatedAttributes = {
     description : 'Changed description'
 };
 
+const pathFilterTestCases: [string, PathQueryFilter, number][] = [
+    ['no filter', {}, 2],
+    ['matching line ID', { lineIds: [lineId] }, 2],
+    ['matching agency ID', { agencyIds: [agencyId] }, 2],
+    ['matching path ID', { pathIds: [newObjectAttributes.id] }, 1],
+    ['non-matching line ID', { lineIds: [uuidV4()] }, 0],
+    ['non-matching path ID', { pathIds: [uuidV4()] }, 0],
+    ['empty line IDs', { lineIds: [] }, 0],
+    ['empty path IDs', { pathIds: [] }, 0],
+    ['non-matching agency ID', { agencyIds: [uuidV4()] }, 0],
+    ['empty agency IDs', { agencyIds: [] }, 0]
+];
+
+const invalidPathFilterTestCases: [string, PathQueryFilter][] = [
+    ['invalid line ID', { lineIds: ['invalid-uuid'] }],
+    ['line IDs containing a valid and invalid ID', { lineIds: [lineId, 'invalid-uuid'] }],
+    ['invalid agency ID', { agencyIds: ['invalid-uuid'] }],
+    ['agency IDs containing a valid and invalid ID', { agencyIds: [agencyId, 'invalid-uuid'] }],
+    ['invalid path ID', { pathIds: ['invalid-uuid'] }],
+    ['path IDs containing a valid and invalid ID', { pathIds: [newObjectAttributes.id, 'invalid-uuid'] }]
+];
+
+const lineData = {
+    id: lineId,
+    agency_id: agencyId,
+    color: '#ffffff',
+    shortname: 'TEST',
+    longname: 'My test line',
+    mode: 'bus'
+};
+
+const agencyData = {
+    id: agencyId,
+    name: 'test',
+    acronym: 'test'
+};
+
 beforeAll(async () => {
     await dbQueries.truncate();
-    await agencyDbQueries.create({
-        id: agencyId,
-        name: 'test',
-        acronym: 'test'
-    } as any);
-    await linesDbQueries.create({
-        id: lineId,
-        agency_id: agencyId,
-        color: '#ffffff',
-    } as any);
+    await agencyDbQueries.create(agencyData as any);
+    await linesDbQueries.create(lineData as any);
     await servicesDbQueries.create({
         id: serviceId
     } as any);
@@ -189,7 +219,52 @@ describe(`${objectName}`, function() {
 
     });
 
-    test('should read geojson collection from database', async () => {
+    test('should read complete path objects', async () => {
+        const objects = await dbQueries.readObjects();
+        expect(objects).toHaveLength(2);
+        expect(objects.map(({ id }) => id)).toEqual([newObjectAttributes.id, newObjectAttributes2.id]);
+        expect(objects[0]).toEqual(
+            expect.objectContaining({
+                id: newObjectAttributes.id,
+                line_id: lineId,
+                nodes: newObjectAttributes.nodes,
+                segments: newObjectAttributes.segments,
+                geography: expect.objectContaining({ type: 'LineString' })
+            })
+        );
+    });
+
+    test.each(pathFilterTestCases)('readObjects applies the %s filter', async (_description, pathFilter, expectedCount) => {
+        expect(await dbQueries.readObjects(pathFilter)).toHaveLength(expectedCount);
+    });
+
+    test.each(invalidPathFilterTestCases)('readObjects rejects the %s filter', async (_description, pathFilter) => {
+        await expect(dbQueries.readObjects(pathFilter)).rejects.toThrow(TrError);
+    });
+
+    test('should read path summaries with node counts', async () => {
+        const summaries = await dbQueries.summaries();
+        expect(summaries).toHaveLength(2);
+        expect(summaries[0]).toEqual({
+            id: newObjectAttributes.id,
+            lineId: lineId,
+            direction: newObjectAttributes.direction,
+            name: updatedAttributes.name,
+            mode: lineData.mode,
+            nodeCount: newObjectAttributes.nodes.length,
+            color: '#ffffff'
+        });
+    });
+
+    test.each(pathFilterTestCases)('summaries applies the %s filter', async (_description, pathFilter, expectedCount) => {
+        expect(await dbQueries.summaries(pathFilter)).toHaveLength(expectedCount);
+    });
+
+    test.each(invalidPathFilterTestCases)('summaries rejects the %s filter', async (_description, pathFilter) => {
+        await expect(dbQueries.summaries(pathFilter)).rejects.toThrow(TrError);
+    });
+
+    test('should read legacy geojson collection from database', async () => {
 
         const _collection = await dbQueries.geojsonCollection();
         const geojsonCollection = new GeojsonCollection([], {});
@@ -220,7 +295,48 @@ describe(`${objectName}`, function() {
 
     });
 
-    test('should read geojson collection by scenario ID', async () => {
+    test('should read GeoJSON collection from database', async () => {
+        const collection = await dbQueries.geojsonCollectionNew({ });
+
+        expect(collection.features).toHaveLength(2);
+        expect(collection.features[0]).toEqual({
+            type: 'Feature',
+            id: newObjectAttributes.integer_id,
+            geometry: newObjectAttributes.geography,
+            properties: {
+                id: newObjectAttributes.id,
+                mode: lineData.mode,
+                lineId: lineId,
+                direction: newObjectAttributes.direction,
+                name: updatedAttributes.name,
+                color: '#ffffff',
+                lineShortname: lineData.shortname,
+                lineName: lineData.longname,
+                agencyAcronym: agencyData.acronym
+            }
+        });
+        expect(collection.features[1].properties).toEqual({
+            id: newObjectAttributes2.id,
+            mode: lineData.mode,
+            lineId: lineId,
+            direction: newObjectAttributes2.direction,
+            name: newObjectAttributes2.name,
+            color: '#ffffff',
+            lineShortname: lineData.shortname,
+            lineName: lineData.longname,
+            agencyAcronym: agencyData.acronym
+        });
+    });
+
+    test.each(pathFilterTestCases)(
+        'geojsonCollectionNew applies the %s filter',
+        async (_description, pathFilter, expectedCount) => {
+            const collection = await dbQueries.geojsonCollectionNew(pathFilter);
+            expect(collection.features).toHaveLength(expectedCount);
+        }
+    );
+
+    test('should read legacy geojson collection by scenario ID', async () => {
         // No scenario, expect empty path collection
         const _collection = await dbQueries.geojsonCollection({scenarioId: uuidV4()});
         const collection = _collection.features;
@@ -266,7 +382,7 @@ describe(`${objectName}`, function() {
 
     });
 
-    test('should read geojson collection by service IDs', async () => {
+    test('should read legacy geojson collection by service IDs', async () => {
         // Empty service IDs, empty feature collection
         const _collection = await dbQueries.geojsonCollectionForServices([]);
         const collection = _collection.features;

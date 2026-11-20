@@ -20,11 +20,18 @@ import {
     deleteRecord,
     deleteMultiple,
     truncate,
-    destroy
+    destroy,
+    uuidsToArray
 } from 'chaire-lib-backend/lib/models/db/default.db.queries';
 import TrError from 'chaire-lib-common/lib/utils/TrError';
 import Preferences from 'chaire-lib-common/lib/config/Preferences';
 import type { PathAttributes } from 'transition-common/lib/services/path/Path';
+import type {
+    PathGeojsonProperties,
+    PathQueryFilter,
+    PathSummaryData
+} from 'transition-common/lib/services/path/IPathRepository';
+import type { PathDirection } from 'transition-common/lib/services/path/Path';
 import {
     createDuplicateQueryWithIdMapping,
     joinWithClauses,
@@ -36,11 +43,38 @@ import {
 
 const tableName = 'tr_transit_paths';
 const linesTableName = 'tr_transit_lines';
+const agenciesTableName = 'tr_transit_agencies';
 const schedulesTableName = 'tr_transit_schedules';
 const periodsTableName = 'tr_transit_schedule_periods';
 const tripsTableName = 'tr_transit_schedule_trips';
 const scenariosServicesTableName = 'tr_transit_scenario_services';
 const st = knexPostgis(knex);
+
+type PathSummaryRow = {
+    id: string;
+    line_id: string;
+    direction: PathDirection;
+    name: string | null;
+    mode: string | null;
+    node_count: number;
+    color: string;
+};
+
+/**
+ * Convert a database summary row into a PathSummaryData
+ *
+ * @param row The database row
+ * @returns The path summary data
+ */
+const toPathSummaryData = (row: PathSummaryRow): PathSummaryData => ({
+    id: row.id,
+    lineId: row.line_id,
+    direction: row.direction,
+    name: row.name ?? undefined,
+    mode: row.mode ?? undefined,
+    color: row.color,
+    nodeCount: row.node_count
+});
 
 // TODO Type the return values
 const attributesCleaner = function (attributes: Partial<PathAttributes>): { [key: string]: any } {
@@ -53,43 +87,20 @@ const attributesCleaner = function (attributes: Partial<PathAttributes>): { [key
     return _attributes;
 };
 
-const collection = async () => {
-    try {
-        const response = await knex.raw(
-            `
-      SELECT
-        p.*,
-        /*l.agency_id,*/
-        COALESCE(p.nodes,    '{}') as nodes,
-        COALESCE(p.stops,    '{}') as stops,
-        COALESCE(p.segments, '{}') as segments,
-        COALESCE(l.color,    '${Preferences.current.transit.lines.defaultColor}') as color,
-        CASE geography WHEN NULL THEN NULL ELSE ST_AsGeoJSON(geography)::jsonb END as geography
-      FROM ${tableName} p
-      LEFT JOIN tr_transit_lines l ON l.id = p.line_id
-      WHERE p.is_enabled IS TRUE
-      ORDER BY integer_id;
-    `
-        );
-        const collection = response.rows;
-        if (collection) {
-            return collection;
-        }
-        throw new TrError(
-            'cannot fetch transit paths collection because database did not return a valid geojson',
-            'TPQC0001',
-            'TransitPathsCollectionCouldNotBeFetchedBecauseDatabaseError'
-        );
-    } catch (error) {
-        throw new TrError(
-            `cannot fetch transit paths collection because of a database error (knex error: ${error})`,
-            'TPQC0002',
-            'TransitPathsCollectionCouldNotBeFetchedBecauseDatabaseError'
-        );
+const applyPathFilter = (query: Knex.QueryBuilder, pathFilter: PathQueryFilter): Knex.QueryBuilder => {
+    if (pathFilter.agencyIds !== undefined) {
+        query.whereIn('l.agency_id', uuidsToArray(pathFilter.agencyIds));
     }
+    if (pathFilter.lineIds !== undefined) {
+        query.whereIn('p.line_id', uuidsToArray(pathFilter.lineIds));
+    }
+    if (pathFilter.pathIds !== undefined) {
+        query.whereIn('p.id', uuidsToArray(pathFilter.pathIds));
+    }
+    return query;
 };
 
-const getGeojsonBaseQuery = (noNullGeo?: boolean): Knex.QueryBuilder => {
+const getGeojsonLegacyBaseQuery = (noNullGeo?: boolean): Knex.QueryBuilder => {
     const query = knex(`${tableName} as p`)
         .leftJoin(`${linesTableName} as l`, 'p.line_id', 'l.id')
         .select(
@@ -164,10 +175,10 @@ const geojsonCollectionFromQuery = async (query: Knex.QueryBuilder) => {
 };
 
 // TODO The noNullGeo should be the default, as null geography should not be acceptable, but the application's PathCollection expects all paths to be there. We'll need to update quite a few things before having noNullGeo by default and always. See #1740
-const geojsonCollection = async (
-    params: { scenarioId?: string; noNullGeo?: boolean } = {}
+const geojsonCollectionLegacy = async (
+    params: { scenarioId?: string; noNullGeo?: boolean; lineIds?: string[]; agencyIds?: string[] } = {}
 ): Promise<GeoJSON.FeatureCollection<GeoJSON.LineString>> => {
-    const baseQuery = getGeojsonBaseQuery(params.noNullGeo);
+    const baseQuery = getGeojsonLegacyBaseQuery(params.noNullGeo);
     // TODO Replace those params by eventual calls to more specific methods like getPathsForScenario
     if (params.scenarioId) {
         baseQuery
@@ -187,7 +198,7 @@ const geojsonCollectionForServices = async (
     if (serviceIds.length === 0) {
         return { type: 'FeatureCollection' as const, features: [] };
     }
-    const baseQuery = getGeojsonBaseQuery(true);
+    const baseQuery = getGeojsonLegacyBaseQuery(true);
     baseQuery
         .innerJoin(`${tripsTableName} as trips`, 'trips.path_id', 'p.id')
         .innerJoin(`${periodsTableName} as periods`, 'periods.id', 'trips.schedule_period_id')
@@ -195,6 +206,137 @@ const geojsonCollectionForServices = async (
         .whereIn('sched.service_id', serviceIds)
         .groupBy('p.id', 'l.color', 'l.mode');
     return await geojsonCollectionFromQuery(baseQuery);
+};
+
+const getGeojsonBaseQuery = (params: PathQueryFilter): Knex.QueryBuilder => {
+    const query = knex(`${tableName} as p`)
+        .innerJoin(`${linesTableName} as l`, 'p.line_id', 'l.id')
+        .innerJoin(`${agenciesTableName} as a`, 'l.agency_id', 'a.id')
+        .select(
+            'p.id',
+            'p.integer_id',
+            'p.line_id',
+            'p.direction',
+            'p.name',
+            'l.mode',
+            'l.color',
+            'l.shortname',
+            'l.longname',
+            'a.acronym',
+            st.asGeoJSON('p.geography').as('geometry')
+        )
+        .where('p.is_enabled', true)
+        .orderBy('p.integer_id');
+    query.whereNotNull('p.geography');
+    return applyPathFilter(query, params);
+};
+
+/**
+ * Get a geojson collection with minimal path information
+ *
+ * FIXME legacy feature collection has this TODO: "Replace those params by
+ * eventual calls to more specific methods like getPathsForScenario". We need to
+ * decide if we want multiple geojson collection getters, that we could add to
+ * the IPathRepository interface, of a single one with filter. For now, just
+ * support the basic filters.
+ *
+ * @param params
+ * @returns
+ */
+const geojsonCollection = async (
+    params: PathQueryFilter = {}
+): Promise<GeoJSON.FeatureCollection<GeoJSON.LineString, PathGeojsonProperties>> => {
+    const baseQuery = getGeojsonBaseQuery(params);
+    const rows = await baseQuery;
+    return {
+        type: 'FeatureCollection',
+        features: rows.map((row) => ({
+            type: 'Feature',
+            id: row.integer_id,
+            geometry: JSON.parse(row.geometry),
+            properties: {
+                id: row.id,
+                mode: row.mode ?? undefined,
+                lineId: row.line_id,
+                direction: row.direction,
+                name: row.name ?? undefined,
+                color: row.color ?? Preferences.current.transit.lines.defaultColor,
+                lineShortname: row.shortname ?? undefined,
+                lineName: row.longname ?? undefined,
+                agencyAcronym: row.acronym ?? undefined
+            }
+        }))
+    };
+};
+
+const getPathBaseQuery = (): Knex.QueryBuilder =>
+    knex(`${tableName} as p`)
+        .leftJoin(`${linesTableName} as l`, 'p.line_id', 'l.id')
+        .select(
+            'p.*',
+            knex.raw('COALESCE(p.nodes, \'{}\') as nodes'),
+            knex.raw('COALESCE(p.stops, \'{}\') as stops'),
+            knex.raw('COALESCE(p.segments, \'{}\') as segments'),
+            knex.raw('COALESCE(l.color, ?) as color', [Preferences.current.transit.lines.defaultColor]),
+            knex.raw('ST_AsGeoJSON(p.geography)::jsonb as geography')
+        )
+        .where('p.is_enabled', true);
+
+const collection = async () => {
+    return readObjects();
+};
+
+const readObjects = async (pathFilter: PathQueryFilter = {}): Promise<PathAttributes[]> => {
+    try {
+        const objects = await applyPathFilter(getPathBaseQuery(), pathFilter).orderBy('p.integer_id');
+        if (objects) {
+            return objects;
+        }
+        throw new TrError(
+            'cannot fetch transit paths objects because database did not return a valid geojson',
+            'TPQC0001',
+            'TransitPathObjectsCouldNotBeFetchedBecauseDatabaseError'
+        );
+    } catch (error) {
+        throw new TrError(
+            `cannot fetch transit paths objects because of a database error (knex error: ${error})`,
+            'TPQC0002',
+            'TransitPathObjectsCouldNotBeFetchedBecauseDatabaseError'
+        );
+    }
+};
+
+const summaries = async (pathFilter: PathQueryFilter = {}): Promise<PathSummaryData[]> => {
+    try {
+        // FIXME Summary should also display some stat data, like total time and/or distance
+        const query = knex(`${tableName} as p`)
+            .leftJoin(`${linesTableName} as l`, 'p.line_id', 'l.id')
+            .select(
+                'p.id',
+                'p.line_id',
+                'p.direction',
+                'p.name',
+                'l.mode',
+                knex.raw('COALESCE(cardinality(p.nodes), 0) as node_count'),
+                knex.raw('COALESCE(l.color, ?) as color', [Preferences.current.transit.lines.defaultColor])
+            )
+            .where('p.is_enabled', true);
+        const rows = await applyPathFilter(query, pathFilter).orderBy('p.integer_id');
+        if (rows) {
+            return rows.map(toPathSummaryData);
+        }
+        throw new TrError(
+            'cannot fetch transit paths summaries because database did not return a valid geojson',
+            'TPQS0001',
+            'TransitPathSummariesCouldNotBeFetchedBecauseDatabaseError'
+        );
+    } catch (error) {
+        throw new TrError(
+            `cannot fetch transit paths summaries because of a database error (knex error: ${error})`,
+            'TPQS0002',
+            'TransitPathSummariesCouldNotBeFetchedBecauseDatabaseError'
+        );
+    }
 };
 
 const read = async (id: string) => {
@@ -206,23 +348,7 @@ const read = async (id: string) => {
                 'DatabaseCannotReadTransitPathBecauseIdIsMissingOrInvalid'
             );
         }
-        const response = await knex.raw(
-            `
-      SELECT
-        p.*,
-        /*l.agency_id,*/
-        COALESCE(p.nodes,    '{}') as nodes,
-        COALESCE(p.stops,    '{}') as stops,
-        COALESCE(p.segments, '{}') as segments,
-        COALESCE(l.color,    '${Preferences.current.transit.lines.defaultColor}') as color,
-        CASE geography WHEN NULL THEN NULL ELSE ST_AsGeoJSON(geography)::jsonb END as geography
-      FROM ${tableName} p
-      LEFT JOIN tr_transit_lines l ON l.id = p.line_id
-      WHERE p.id = '${id}' AND p.is_enabled IS TRUE
-      ORDER BY p.integer_id;
-    `
-        );
-        const rows = response.rows;
+        const rows = await getPathBaseQuery().where('p.id', id).orderBy('p.integer_id');
         if (rows.length !== 1) {
             throw new TrError(
                 `Cannot find object with id ${id} from table ${tableName}`,
@@ -359,8 +485,20 @@ export default {
         deleteMultiple(knex, tableName, ids, options),
     truncate: truncate.bind(null, knex, tableName),
     destroy: destroy.bind(null, knex),
+    /**
+     * @deprecated Use the `summaries` function instead to get summarized data,
+     * suitable for listing, or `readObjects` to get complete objects data.
+     * Previous behavior was the `readObjects` function
+     */
     collection,
-    geojsonCollection,
+    readObjects,
+    summaries,
+    /**
+     * @deprecated This function should not be used to get all the path data.
+     * Use `geojsonCollectionNew` to get minimal geojson data
+     */
+    geojsonCollection: geojsonCollectionLegacy,
+    geojsonCollectionNew: geojsonCollection,
     geojsonCollectionForServices,
     duplicate
 };
